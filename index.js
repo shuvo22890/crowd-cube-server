@@ -30,20 +30,96 @@ async function run() {
 
         const database = client.db("crowd-cube");
         const campaignsCollection = database.collection("campaigns");
+        const runningCampaignsCollection = database.collection("running-campaigns");
         const donatedCollection = database.collection("donated");
+        const contributorsCollection = database.collection("contributors");
+
+        // Get Total number of campaigns
+        app.get('/total-campaigns', async (req, res) => {
+            const type = req?.query?.type;
+            const query = {}
+            if (type) query.type = type;
+
+            const result = await campaignsCollection.countDocuments(query);
+            res.send({ total: result })
+        })
+
+        app.get('/total-running-campaigns', async (req, res) => {
+            const type = req?.query?.type;
+            const query = {}
+            if (type) query.type = type;
+
+            const result = await runningCampaignsCollection.countDocuments(query);
+            res.send({ total: result })
+        })
 
         // Load all the campaigns excluding some fields
-        app.get('/', async (req, res) => {
-            const projection = {
-                thumb: 0,
-                description: 0,
-                name: 0,
-                email: 0
+        app.get('/campaigns', async (req, res) => {
+            const limit = parseInt(req?.query?.limit) || 8;
+            const page = parseInt(req?.query?.page) || 0;
+            const sort = req?.query?.sort;
+            const type = req?.query?.type;
+
+            const query = {}
+            if (type) query.type = type;
+
+            const cursor = campaignsCollection.find(query)
+
+            if (sort) {
+                const sortQuery = {}
+                if (sort === 'sort-by-deadline') {
+                    sortQuery.deadline = -1;
+                } else {
+                    sortQuery.deadline = sort === 'asc' ? 1 : -1
+                }
+                cursor.sort(sortQuery);
             }
-            const cursor = campaignsCollection.find().project(projection);
+
+            cursor.skip(limit * page).limit(limit);
             const result = await cursor.toArray();
             res.send(result);
         });
+
+        app.get('/running-campaigns', async (req, res) => {
+            const limit = parseInt(req?.query?.limit) || 8;
+            const page = parseInt(req?.query?.page) || 0;
+            const sort = req?.query?.sort;
+            const type = req?.query?.type;
+
+            const query = {}
+            if (type) query.type = type;
+
+            const cursor = runningCampaignsCollection.find(query)
+
+            if (sort) {
+                const sortQuery = {}
+                if (sort === 'sort-by-deadline') {
+                    sortQuery.deadline = -1;
+                } else {
+                    sortQuery.deadline = sort === 'asc' ? 1 : -1
+                }
+                cursor.sort(sortQuery);
+            }
+
+            cursor.skip(limit * page).limit(limit);
+            const result = await cursor.toArray();
+            res.send(result);
+        });
+
+        // Load contributors
+        app.get('/contributors', async (req, res) => {
+            const page = req?.query?.page || 0;
+            const limit = parseInt(req?.query?.limit || 6);
+            const cursor = contributorsCollection.find().skip(page * limit).limit(limit);
+            const result = await cursor.toArray();
+            res.send(result);
+        });
+
+        // Get Total number of contributors
+        app.get('/total-contributors', async (req, res) => {
+            const result = await contributorsCollection.estimatedDocumentCount();
+            res.send({ total: result })
+        })
 
         // Load campaigns of logged in user
         app.post('/my-campaigns/', async (req, res) => {
@@ -99,23 +175,16 @@ async function run() {
         })
 
         // Load six running campaigns
-        app.get('/running-campaigns', async (req, res) => {
-            const dateNow = new Date().getTime();
-
-            // Load the campaigns where deadline is greater than or equal to today
-            const query = {
-                deadline: { $gte: dateNow }
-            }
-
+        app.get('/recent-campaigns', async (req, res) => {
             // Excluding some fields it will be displayed in details page
             const projection = {
-                description: 0,
-                amount: 0,
                 name: 0,
                 email: 0
             }
 
-            const cursor = campaignsCollection.find(query).project(projection).limit(6);
+            const cursor = campaignsCollection.find().project(projection).sort({
+                deadline: -1
+            }).limit(8);
 
             const result = await cursor.toArray();
             res.send(result);
@@ -148,10 +217,10 @@ async function run() {
         // add data to donated collection
         app.post('/donate', async (req, res) => {
             const data = req.body;
-            const query = {campaign_id: data.campaign_id, donor_email: data.donor_email}
-            const isExists = await donatedCollection.findOne(query, {projection: {title: 1}});
-            if(isExists){
-                res.send({code: 11000});
+            const query = { campaign_id: data.campaign_id, donor_email: data.donor_email }
+            const isExists = await donatedCollection.findOne(query, { projection: { title: 1 } });
+            if (isExists) {
+                res.send({ code: 11000 });
                 return;
             }
             const result = await donatedCollection.insertOne(data);
